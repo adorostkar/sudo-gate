@@ -1,0 +1,19 @@
+{
+  "telegram": {
+    "bot_token": "__REDACTED__",
+    "allowed_user_id": 0,
+    "allowed_chat_id": null,
+    "poll_interval_ms": 1500
+  },
+  "security": {
+    "hmac_secret_hex": "__GENERATE_32_BYTES_HEX__",
+    "request_ttl_seconds": 90
+  },
+  "policy": {
+    "mode": "allow_all",
+    "deny": []
+  },
+  "logging": {
+    "path": "/var/log/sudo-gate.log"
+  }
+}
