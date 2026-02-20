@@ -1,13 +1,8 @@
-use anyhow::{anyhow, Context, Result};
-use hmac::{Hmac, Mac};
+use anyhow::{Context, Result};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::UnixDatagram;
-use tokio::time::sleep;
 
 // NOTE: This is an initial scaffold.
 // It currently implements ONLY config loading + a Telegram connectivity smoke test.
@@ -85,10 +80,10 @@ async fn main() -> Result<()> {
 
     // Basic sanity checks.
     if cfg.telegram.allowed_user_id == 0 {
-        return Err(anyhow("telegram.allowed_user_id must be set"));
+        return Err(anyhow::anyhow!("telegram.allowed_user_id must be set"));
     }
     if cfg.security.hmac_secret_hex.len() < 32 {
-        return Err(anyhow("security.hmac_secret_hex looks too short"));
+        return Err(anyhow::anyhow!("security.hmac_secret_hex looks too short"));
     }
 
     // Telegram connectivity smoke test.
@@ -99,7 +94,7 @@ async fn main() -> Result<()> {
     let client = reqwest::Client::new();
     let resp: TgGetMe = client.get(url).send().await?.json().await?;
     if !resp.ok {
-        return Err(anyhow("telegram getMe failed"));
+        return Err(anyhow::anyhow!("telegram getMe failed"));
     }
     let bot = resp.result.context("missing bot result")?;
 
