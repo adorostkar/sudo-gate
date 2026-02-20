@@ -56,14 +56,15 @@ fn render_cmd(argv: &[String]) -> String {
 
 fn cb_data(key: &[u8], action: &str, request_id: &str, exp: u64) -> String {
     // Telegram callback_data limit is 64 bytes.
-    // v1:<a|d>:<rid>:<exp>:<sig24>
+    // v1:<a|d>:<rid>:<exp>:<sig20>
+    // Keep it compact: request_id is 16 hex chars, signature is 20 hex chars.
     let act = match action {
         "approve" => "a",
         "deny" => "d",
         _ => "x",
     };
     let msg = format!("v1:{act}:{request_id}:{exp}");
-    let sig = sign_trunc_hex(key, msg.as_bytes(), 24);
+    let sig = sign_trunc_hex(key, msg.as_bytes(), 20);
     format!("{msg}:{sig}")
 }
 
@@ -181,7 +182,7 @@ async fn handle_update(
     };
 
     let msg = format!("v1:{act}:{request_id}:{exp}");
-    let expect = sign_trunc_hex(key, msg.as_bytes(), 24);
+    let expect = sign_trunc_hex(key, msg.as_bytes(), 20);
     if !eq_ct(&sig, &expect) {
         let _ = tg
             .answer_callback_query(&cb.id, Some("bad signature"))
@@ -278,7 +279,8 @@ async fn handle_client(
     // create request id
     let mut nonce = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut nonce);
-    let request_id = hex::encode(&nonce[..12]);
+    // 16 hex chars (8 bytes) to keep Telegram callback_data under 64 bytes
+    let request_id = hex::encode(&nonce[..8]);
 
     let exp = now_unix() + cfg.security.request_ttl_seconds;
 
