@@ -1,27 +1,62 @@
-# sudo-gate (draft)
+# sudo-gate
 
-Root-privileged sudo approval gate with Telegram approvals.
+A small **root daemon** that runs privileged commands only after you approve them in **Telegram**.
 
-## Status
+## What it does
 
-Draft scaffold. Intended design:
-- `sudo-gated` (daemon) runs as root, listens on Unix socket.
-- `sudo-gate` (client) is executed by unprivileged user, submits a request.
-- Daemon sends Telegram message (reason + exact command) with Approve/Deny inline buttons.
-- Approval uses in-memory nonce + HMAC signature; single-use + short expiry.
+- `sudo-gated` (daemon, runs as root)
+  - listens on a Unix socket (default: `/run/sudo-gate/sock`)
+  - sends an approval prompt to Telegram with **Approve/Deny** buttons
+  - executes the requested command **only after approval** (argv-only, no shell)
+  - edits the Telegram message to remove buttons after one click
+  - sends a Telegram follow-up with the execution result
+
+- `sudo-gate` (client, runs unprivileged)
+  - submits a request with `--reason` and `-- <cmd args...>`
+
+## Security model (honest)
+
+- This is an **approval gate**, not magic: if the requesting user still has direct `sudo` (or can edit systemd/cron/sudoers), they can bypass it.
+- Real safety requires OS hardening: run OpenClaw under a non-sudo user and restrict write access to privileged control planes.
 
 ## Config
 
-Will live at `/etc/sudo-gate/config.json` (root-owned 0600) in production.
+Production config is expected at:
+- `/etc/sudo-gate/config.json` (root-owned `0600`)
 
-Fields:
-- telegram.bot_token (secret)
-- telegram.allowed_user_id (Ashkan)
-- telegram.allowed_chat_id (optional)
-- telegram.polling (offset, interval)
-- policy.mode: `allow_all` for now
-- policy.deny: empty for now
+Key fields:
+- `telegram.bot_token` (secret)
+- `telegram.allowed_user_id` (numeric Telegram user id allowed to approve)
+- `telegram.allowed_chat_id` (optional extra guard)
+- `security.hmac_secret_hex` (32 bytes hex recommended)
+- `security.request_ttl_seconds` (approval timeout)
+- `policy.mode`: `allow_all` for now (later: deny-by-default)
+- `policy.deny`: empty array for now
 
-## Notes
+See: `config.example.json`.
 
-Do NOT store secrets in git. Use the config file above.
+## Build
+
+```bash
+. "$HOME/.cargo/env"
+cargo build --release
+```
+
+## Install + run
+
+See `packaging/INSTALL.md`.
+
+## Usage
+
+Submit a request:
+
+```bash
+sudo-gate request --reason "restart nginx" -- systemctl restart nginx
+```
+
+Approve in Telegram.
+
+## Repo hygiene
+
+- Never commit secrets.
+- Use `/etc/sudo-gate/config.json` (or a local ignored config).
