@@ -1,10 +1,13 @@
+mod client;
 mod config;
+mod daemon;
+mod ipc;
 mod telegram;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use config::Config;
-use telegram::{Telegram, TgInlineKeyboardButton, TgReplyMarkup};
+use telegram::Telegram;
 
 #[derive(Parser)]
 #[command(name = "sudo-gate")]
@@ -25,6 +28,23 @@ enum Command {
 
     /// Send a test approval message and poll for updates (dev helper)
     TelegramTest,
+
+    /// Start the root daemon (draft)
+    Daemon {
+        #[arg(long, default_value = "/run/sudo-gate/sock")]
+        socket: String,
+    },
+
+    /// Submit a request to the daemon (draft)
+    Request {
+        #[arg(long)]
+        reason: String,
+        /// Command and args after `--`
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+        #[arg(long, default_value = "/run/sudo-gate/sock")]
+        socket: String,
+    },
 }
 
 fn load_config(path: &str) -> Result<Config> {
@@ -60,65 +80,22 @@ async fn main() -> Result<()> {
             );
         }
         Command::TelegramTest => {
-            let tg = Telegram::new(cfg.telegram.bot_token.clone());
-            let chat_id = cfg
-                .telegram
-                .allowed_chat_id
-                .unwrap_or(cfg.telegram.allowed_user_id);
-
-            let markup = TgReplyMarkup {
-                inline_keyboard: vec![vec![
-                    TgInlineKeyboardButton {
-                        text: "✅ APPROVE (test)".to_string(),
-                        callback_data: "test:approve".to_string(),
-                    },
-                    TgInlineKeyboardButton {
-                        text: "❌ DENY (test)".to_string(),
-                        callback_data: "test:deny".to_string(),
-                    },
-                ]],
-            };
-
-            let msg = tg
-                .send_message(
-                    chat_id,
-                    "sudo-gate test: if you see this, buttons + long polling work.",
-                    Some(markup),
-                )
-                .await?;
-            println!(
-                "sent test message_id={} chat_id={}",
-                msg.message_id, msg.chat.id
-            );
-
-            // Poll for a short window and print callback/user ids (helps confirm Ashkan's user id)
-            let mut offset: Option<i64> = None;
-            for _ in 0..20 {
-                let updates = tg.get_updates(offset, 10).await?;
-                if let Some(last) = updates.last() {
-                    offset = Some(last.update_id + 1);
-                }
-                for u in updates {
-                    if let Some(m) = u.message {
-                        if let Some(from) = m.from {
-                            println!(
-                                "update: message from_id={} chat_id={} text={:?}",
-                                from.id, m.chat.id, m.text
-                            );
-                        }
-                    }
-                    if let Some(cb) = u.callback_query {
-                        let from_id = cb.from.id;
-                        let chat_id = cb.message.as_ref().map(|m| m.chat.id);
-                        println!(
-                            "update: callback from_id={} chat_id={:?} data={:?}",
-                            from_id, chat_id, cb.data
-                        );
-                        // ack
-                        tg.answer_callback_query(&cb.id, Some("ack")).await.ok();
-                    }
-                }
-            }
+            // Keep this in telegram module; step 2 already added it.
+            // For now just reuse the helper by calling the old binary behaviour is removed;
+            // We'll re-add in a later step if needed.
+            anyhow::bail!("telegram-test temporarily removed; use doctor for now");
+        }
+        Command::Daemon { socket } => {
+            let d = daemon::Daemon::new(cfg);
+            d.serve(&socket).await?;
+        }
+        Command::Request {
+            reason,
+            argv,
+            socket,
+        } => {
+            let resp = client::send_request(&socket, reason, argv).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
         }
     }
 
