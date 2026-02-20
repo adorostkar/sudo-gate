@@ -3,6 +3,7 @@ mod client;
 mod config;
 mod daemon;
 mod ipc;
+mod policy;
 mod telegram;
 
 use anyhow::{Context, Result};

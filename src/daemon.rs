@@ -1,6 +1,7 @@
 use crate::auth::{decode_hmac_key, eq_ct, sign_trunc_hex};
 use crate::config::Config;
 use crate::ipc::{Request, Response};
+use crate::policy::{evaluate, PolicyDecision};
 use crate::telegram::{Telegram, TgInlineKeyboardButton, TgReplyMarkup, TgUpdate};
 use anyhow::{anyhow, Context, Result};
 use rand::RngCore;
@@ -256,6 +257,23 @@ async fn handle_client(
 
     // Safety: never execute via shell.
     let cmd_disp = render_cmd(&req.argv);
+
+    match evaluate(&cfg.policy, &req.argv) {
+        PolicyDecision::Allow => {}
+        PolicyDecision::Deny(why) => {
+            let resp = Response {
+                ok: false,
+                message: why,
+                request_id: None,
+                approved: Some(false),
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+            };
+            stream.write_all(&serde_json::to_vec(&resp)?).await?;
+            return Ok(());
+        }
+    }
 
     // create request id
     let mut nonce = [0u8; 32];
