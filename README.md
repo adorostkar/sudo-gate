@@ -44,7 +44,37 @@ cargo build --release
 
 ## Install + run
 
-See `packaging/INSTALL.md`.
+See `packaging/INSTALL.md` for the full install.
+
+### Hard-gate essentials (summary)
+
+This tool is only a *real* gate if your automation user cannot bypass it.
+
+1) Create group and add your automation user:
+
+```bash
+sudo groupadd --system sudo-gate 2>/dev/null || true
+sudo usermod -aG sudo-gate <AUTOMATION_USER>
+```
+
+2) Config must be root-owned:
+
+```bash
+sudo mkdir -p /etc/sudo-gate
+sudo cp config.example.json /etc/sudo-gate/config.json
+sudo chmod 0600 /etc/sudo-gate/config.json
+sudoedit /etc/sudo-gate/config.json
+```
+
+3) Runtime dir + socket perms (daemon should enforce these on startup):
+- `/run/sudo-gate` should be `root:sudo-gate` mode `0750`
+- `/run/sudo-gate/sock` should be `root:sudo-gate` mode `0660`
+
+4) Ensure your automation user does **not** have direct sudo (otherwise it can bypass the gate):
+
+```bash
+sudo -l -U <AUTOMATION_USER>
+```
 
 ## Usage
 
