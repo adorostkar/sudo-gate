@@ -1,3 +1,4 @@
+mod auth;
 mod client;
 mod config;
 mod daemon;
@@ -7,7 +8,7 @@ mod telegram;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use config::Config;
-use telegram::Telegram;
+use telegram::{Telegram, TgInlineKeyboardButton, TgReplyMarkup};
 
 #[derive(Parser)]
 #[command(name = "sudo-gate")]
@@ -26,7 +27,7 @@ enum Command {
     /// Validate config and Telegram connectivity
     Doctor,
 
-    /// Send a test approval message and poll for updates (dev helper)
+    /// Send a test message with inline buttons (dev helper)
     TelegramTest,
 
     /// Start the root daemon (draft)
@@ -80,10 +81,34 @@ async fn main() -> Result<()> {
             );
         }
         Command::TelegramTest => {
-            // Keep this in telegram module; step 2 already added it.
-            // For now just reuse the helper by calling the old binary behaviour is removed;
-            // We'll re-add in a later step if needed.
-            anyhow::bail!("telegram-test temporarily removed; use doctor for now");
+            let tg = Telegram::new(cfg.telegram.bot_token.clone());
+            let chat_id = cfg
+                .telegram
+                .allowed_chat_id
+                .unwrap_or(cfg.telegram.allowed_user_id);
+            let markup = TgReplyMarkup {
+                inline_keyboard: vec![vec![
+                    TgInlineKeyboardButton {
+                        text: "✅ APPROVE (test)".to_string(),
+                        callback_data: "test:approve".to_string(),
+                    },
+                    TgInlineKeyboardButton {
+                        text: "❌ DENY (test)".to_string(),
+                        callback_data: "test:deny".to_string(),
+                    },
+                ]],
+            };
+            let msg = tg
+                .send_message(
+                    chat_id,
+                    "sudo-gate test: if you see this, sendMessage works.",
+                    Some(markup),
+                )
+                .await?;
+            println!(
+                "sent test message_id={} chat_id={}",
+                msg.message_id, msg.chat.id
+            );
         }
         Command::Daemon { socket } => {
             let d = daemon::Daemon::new(cfg);
