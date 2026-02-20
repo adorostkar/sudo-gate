@@ -14,6 +14,28 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::sleep;
 
+fn set_socket_perms(socket_path: &str, group_name: &str) -> Result<()> {
+    use nix::unistd::{chown, Gid, Group, Uid};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let gid = Group::from_name(group_name)
+        .context("lookup group")?
+        .ok_or_else(|| anyhow!("group not found: {group_name}"))
+        .map(|g| Gid::from_raw(g.gid.as_raw()))?;
+
+    // root:group
+    chown(socket_path, Some(Uid::from_raw(0)), Some(gid)).context("chown socket")?;
+
+    // 0660
+    let mut perms = fs::metadata(socket_path)
+        .context("stat socket")?
+        .permissions();
+    perms.set_mode(0o660);
+    fs::set_permissions(socket_path, perms).context("chmod socket")?;
+    Ok(())
+}
+
 pub struct Daemon {
     cfg: Config,
     tg: Telegram,
@@ -100,6 +122,11 @@ impl Daemon {
 
         let listener = UnixListener::bind(socket_path)
             .with_context(|| format!("bind unix socket: {socket_path}"))?;
+
+        // Ensure socket is accessible to the request group.
+        // Without this, UnixListener::bind will create root:root with a restrictive mode.
+        set_socket_perms(socket_path, "sudo-gate").with_context(|| "set socket ownership/mode")?;
+
         println!("sudo-gated: listening on {socket_path}");
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
