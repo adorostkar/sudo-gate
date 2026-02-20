@@ -20,10 +20,6 @@ pub struct Daemon {
 
 #[derive(Debug)]
 struct Pending {
-    argv: Vec<String>,
-    reason: String,
-    cmd_disp: String,
-    expires_at: u64,
     decision_tx: oneshot::Sender<bool>,
 }
 
@@ -43,7 +39,6 @@ fn sha256_hex(s: &str) -> String {
 }
 
 fn render_cmd(argv: &[String]) -> String {
-    // Minimal shell-escaped rendering for display only.
     argv.iter()
         .map(|a| {
             if a.chars()
@@ -60,7 +55,7 @@ fn render_cmd(argv: &[String]) -> String {
 
 fn cb_data(key: &[u8], action: &str, request_id: &str, exp: u64) -> String {
     // Telegram callback_data limit is 64 bytes.
-    // Keep compact: v1:<a|d>:<rid>:<exp>:<sig24>
+    // v1:<a|d>:<rid>:<exp>:<sig24>
     let act = match action {
         "approve" => "a",
         "deny" => "d",
@@ -72,7 +67,6 @@ fn cb_data(key: &[u8], action: &str, request_id: &str, exp: u64) -> String {
 }
 
 fn parse_cb(data: &str) -> Option<(String, String, u64, String)> {
-    // returns (act, request_id, exp, sig)
     let parts: Vec<&str> = data.split(':').collect();
     if parts.len() != 5 {
         return None;
@@ -96,7 +90,6 @@ impl Daemon {
     pub async fn serve(self, socket_path: &str) -> Result<()> {
         let key = decode_hmac_key(&self.cfg.security.hmac_secret_hex)?;
 
-        // Ensure old socket removed
         let _ = std::fs::remove_file(socket_path);
         if let Some(parent) = std::path::Path::new(socket_path).parent() {
             std::fs::create_dir_all(parent)
@@ -109,7 +102,7 @@ impl Daemon {
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
 
-        // Start telegram poll loop
+        // Telegram poll loop
         {
             let tg = self.tg.clone();
             let cfg = self.cfg.clone();
@@ -165,7 +158,6 @@ async fn handle_update(
         return Ok(());
     };
 
-    // Enforce identity.
     if cb.from.id != cfg.telegram.allowed_user_id {
         let _ = tg
             .answer_callback_query(&cb.id, Some("not authorized"))
@@ -173,7 +165,6 @@ async fn handle_update(
         return Ok(());
     }
 
-    // Optionally enforce chat.
     if let Some(allowed_chat) = cfg.telegram.allowed_chat_id {
         let chat_id = cb.message.as_ref().map(|m| m.chat.id);
         if chat_id != Some(allowed_chat) {
@@ -188,7 +179,6 @@ async fn handle_update(
         return Ok(());
     };
 
-    // Verify signature
     let msg = format!("v1:{act}:{request_id}:{exp}");
     let expect = sign_trunc_hex(key, msg.as_bytes(), 24);
     if !eq_ct(&sig, &expect) {
@@ -198,14 +188,12 @@ async fn handle_update(
         return Ok(());
     }
 
-    // Expiry check from payload
     let now = now_unix();
     if now > exp {
         let _ = tg.answer_callback_query(&cb.id, Some("expired")).await;
         return Ok(());
     }
 
-    // Decision
     let decision = match act.as_str() {
         "a" => true,
         "d" => false,
@@ -215,7 +203,6 @@ async fn handle_update(
         }
     };
 
-    // Pop pending and notify
     let mut map = pending.lock().await;
     if let Some(p) = map.remove(&request_id) {
         let _ = p.decision_tx.send(decision);
@@ -267,29 +254,21 @@ async fn handle_client(
         return Ok(());
     }
 
+    // Safety: never execute via shell.
     let cmd_disp = render_cmd(&req.argv);
-    let _cmd_hash = sha256_hex(&cmd_disp);
 
-    // create pending request (in-memory)
+    // create request id
     let mut nonce = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut nonce);
     let request_id = hex::encode(&nonce[..12]);
 
-    let (tx, rx) = oneshot::channel::<bool>();
-
     let exp = now_unix() + cfg.security.request_ttl_seconds;
+
+    // Store decision channel
+    let (tx, rx) = oneshot::channel::<bool>();
     {
         let mut map = pending.lock().await;
-        map.insert(
-            request_id.clone(),
-            Pending {
-                argv: req.argv.clone(),
-                reason: req.reason.clone(),
-                cmd_disp: cmd_disp.clone(),
-                expires_at: exp,
-                decision_tx: tx,
-            },
-        );
+        map.insert(request_id.clone(), Pending { decision_tx: tx });
     }
 
     // Telegram prompt
@@ -297,9 +276,13 @@ async fn handle_client(
         .telegram
         .allowed_chat_id
         .unwrap_or(cfg.telegram.allowed_user_id);
+    let cmd_hash = sha256_hex(&cmd_disp);
     let text = format!(
-        "🔐 SUDO REQUEST\n\nReason: {}\nCommand: {}\n\nApprove? (expires in {}s)",
-        req.reason, cmd_disp, cfg.security.request_ttl_seconds
+        "🔐 SUDO REQUEST\n\nReason: {}\nCommand: {}\nCmdHash: {}\n\nApprove? (expires in {}s)",
+        req.reason,
+        cmd_disp,
+        &cmd_hash[..12],
+        cfg.security.request_ttl_seconds
     );
 
     let approve = cb_data(key, "approve", &request_id, exp);
@@ -323,28 +306,52 @@ async fn handle_client(
 
     tg.send_message(chat_id, &text, Some(markup)).await?;
 
-    // Wait for decision (execution comes next step)
+    // Wait for decision
     let decision = tokio::select! {
         d = rx => d.context("decision channel")?,
-        _ = sleep(Duration::from_secs(cfg.security.request_ttl_seconds)) => {
-            false
-        }
+        _ = sleep(Duration::from_secs(cfg.security.request_ttl_seconds)) => false,
     };
 
+    if !decision {
+        let resp = Response {
+            ok: true,
+            message: "denied/timeout".to_string(),
+            request_id: Some(request_id),
+            approved: Some(false),
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+        };
+        stream.write_all(&serde_json::to_vec(&resp)?).await?;
+        return Ok(());
+    }
+
+    // Execute (argv-only)
+    let mut cmd = tokio::process::Command::new(&req.argv[0]);
+    if req.argv.len() > 1 {
+        cmd.args(&req.argv[1..]);
+    }
+
+    let out = cmd.output().await.context("exec command")?;
+    let exit_code = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
     let resp = Response {
-        ok: true,
-        message: if decision {
-            "approved (exec not implemented yet)"
+        ok: out.status.success(),
+        message: if out.status.success() {
+            "executed"
         } else {
-            "denied/timeout"
+            "executed (non-zero exit)"
         }
         .to_string(),
         request_id: Some(request_id),
-        approved: Some(decision),
-        exit_code: None,
-        stdout: None,
-        stderr: None,
+        approved: Some(true),
+        exit_code: Some(exit_code),
+        stdout: Some(stdout),
+        stderr: Some(stderr),
     };
+
     stream.write_all(&serde_json::to_vec(&resp)?).await?;
     Ok(())
 }
