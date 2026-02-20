@@ -205,6 +205,13 @@ async fn handle_update(
         }
     };
 
+    // Best-effort: remove inline buttons so the choice can't be clicked again.
+    if let Some(msg) = cb.message.as_ref() {
+        let _ = tg
+            .edit_message_reply_markup(msg.chat.id, msg.message_id, None)
+            .await;
+    }
+
     let mut map = pending.lock().await;
     if let Some(p) = map.remove(&request_id) {
         let _ = p.decision_tx.send(decision);

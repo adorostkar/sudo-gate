@@ -95,6 +95,32 @@ impl Telegram {
         }
         Ok(())
     }
+
+    pub async fn edit_message_reply_markup(
+        &self,
+        chat_id: i64,
+        message_id: i64,
+        reply_markup: Option<TgReplyMarkup>,
+    ) -> Result<()> {
+        let url = self.api_url("editMessageReplyMarkup");
+        let body = TgEditMessageReplyMarkup {
+            chat_id,
+            message_id,
+            reply_markup,
+        };
+        let resp: TgOk = self
+            .client
+            .post(url)
+            .json(&body)
+            .send()
+            .await?
+            .json()
+            .await?;
+        if !resp.ok {
+            return Err(anyhow!("telegram editMessageReplyMarkup failed"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +195,14 @@ struct TgAnswerCallback {
     text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     show_alert: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct TgEditMessageReplyMarkup {
+    chat_id: i64,
+    message_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_markup: Option<TgReplyMarkup>,
 }
 
 #[derive(Debug, Deserialize)]
