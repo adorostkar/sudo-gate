@@ -17,7 +17,7 @@ A small **root daemon** that runs privileged commands only after you approve the
 ## Security model (honest)
 
 - This is an **approval gate**, not magic: if the requesting user still has direct `sudo` (or can edit systemd/cron/sudoers), they can bypass it.
-- Real safety requires OS hardening: run OpenClaw under a non-sudo user and restrict write access to privileged control planes.
+- Real safety requires OS hardening: run your automation under a non-sudo user and restrict write access to privileged control planes.
 
 ## Config
 
@@ -56,6 +56,7 @@ sudo-gate request --reason "restart nginx" -- systemctl restart nginx
 
 Approve in Telegram.
 
+Tip: this works well as a gate in front of any automation (CI runner, cron job, agent, scripts).
 ## Repo hygiene
 
 - Never commit secrets.
