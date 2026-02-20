@@ -14,20 +14,38 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::sleep;
 
-fn set_socket_perms(socket_path: &str, group_name: &str) -> Result<()> {
-    use nix::unistd::{chown, Gid, Group, Uid};
+fn sudo_gate_gid(group_name: &str) -> Result<nix::unistd::Gid> {
+    use nix::unistd::{Gid, Group};
+    let g = Group::from_name(group_name)
+        .context("lookup group")?
+        .ok_or_else(|| anyhow!("group not found: {group_name}"))?;
+    Ok(Gid::from_raw(g.gid.as_raw()))
+}
+
+fn set_dir_perms(dir_path: &std::path::Path, group_name: &str) -> Result<()> {
+    use nix::unistd::{chown, Uid};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    let gid = Group::from_name(group_name)
-        .context("lookup group")?
-        .ok_or_else(|| anyhow!("group not found: {group_name}"))
-        .map(|g| Gid::from_raw(g.gid.as_raw()))?;
+    let gid = sudo_gate_gid(group_name)?;
 
-    // root:group
+    chown(dir_path, Some(Uid::from_raw(0)), Some(gid)).context("chown dir")?;
+
+    let mut perms = fs::metadata(dir_path).context("stat dir")?.permissions();
+    perms.set_mode(0o750);
+    fs::set_permissions(dir_path, perms).context("chmod dir")?;
+    Ok(())
+}
+
+fn set_socket_perms(socket_path: &str, group_name: &str) -> Result<()> {
+    use nix::unistd::{chown, Uid};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let gid = sudo_gate_gid(group_name)?;
+
     chown(socket_path, Some(Uid::from_raw(0)), Some(gid)).context("chown socket")?;
 
-    // 0660
     let mut perms = fs::metadata(socket_path)
         .context("stat socket")?
         .permissions();
@@ -118,6 +136,7 @@ impl Daemon {
         if let Some(parent) = std::path::Path::new(socket_path).parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create socket dir: {}", parent.display()))?;
+            set_dir_perms(parent, "sudo-gate").with_context(|| "set socket dir perms")?;
         }
 
         let listener = UnixListener::bind(socket_path)
