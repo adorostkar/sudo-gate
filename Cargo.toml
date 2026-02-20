@@ -16,3 +16,15 @@ base64 = "0.22"
 urlencoding = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[lib]
+name = "sudo_gate"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sudo-gate"
+path = "src/bin/sudo-gate.rs"
+
+[[bin]]
+name = "sudo-gated"
+path = "src/bin/sudo-gated.rs"
