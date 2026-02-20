@@ -405,10 +405,36 @@ async fn handle_client(
         cmd.args(&req.argv[1..]);
     }
 
-    let out = cmd.output().await.context("exec command")?;
+    let out = match tokio::time::timeout(Duration::from_secs(60), cmd.output()).await {
+        Ok(r) => r.context("exec command")?,
+        Err(_) => {
+            let resp = Response {
+                ok: false,
+                message: "execution timed out (60s)".to_string(),
+                request_id: Some(request_id),
+                approved: Some(true),
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+            };
+            stream.write_all(&serde_json::to_vec(&resp)?).await?;
+            return Ok(());
+        }
+    };
     let exit_code = out.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let mut stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let mut stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    // Prevent huge payloads (both client JSON and Telegram follow-ups)
+    const MAX_OUT: usize = 8_000;
+    if stdout.len() > MAX_OUT {
+        stdout.truncate(MAX_OUT);
+        stdout.push_str("\n…(truncated)…");
+    }
+    if stderr.len() > MAX_OUT {
+        stderr.truncate(MAX_OUT);
+        stderr.push_str("\n…(truncated)…");
+    }
 
     let resp = Response {
         ok: out.status.success(),
@@ -418,12 +444,25 @@ async fn handle_client(
             "executed (non-zero exit)"
         }
         .to_string(),
-        request_id: Some(request_id),
+        request_id: Some(request_id.clone()),
         approved: Some(true),
         exit_code: Some(exit_code),
-        stdout: Some(stdout),
-        stderr: Some(stderr),
+        stdout: Some(stdout.clone()),
+        stderr: Some(stderr.clone()),
     };
+
+    // Best-effort: send execution result back to Telegram.
+    // Keep message short to avoid Telegram limits.
+    const MAX_TG: usize = 3500;
+    let mut tg_text = format!(
+        "✅ SUDO RESULT\n\nCommand: {}\nExit: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+        cmd_disp, exit_code, stdout, stderr
+    );
+    if tg_text.len() > MAX_TG {
+        tg_text.truncate(MAX_TG);
+        tg_text.push_str("\n…(truncated)…");
+    }
+    let _ = tg.send_message(chat_id, &tg_text, None).await;
 
     stream.write_all(&serde_json::to_vec(&resp)?).await?;
     Ok(())
