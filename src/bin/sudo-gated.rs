@@ -18,13 +18,7 @@ struct Cli {
 fn load_config(path: &str) -> Result<Config> {
     let cfg_text = std::fs::read_to_string(path).with_context(|| format!("read config: {path}"))?;
     let cfg: Config = serde_json::from_str(&cfg_text).context("parse config")?;
-
-    if cfg.telegram.allowed_user_id == 0 {
-        anyhow::bail!("telegram.allowed_user_id must be set");
-    }
-    if cfg.security.hmac_secret_hex.len() < 32 {
-        anyhow::bail!("security.hmac_secret_hex looks too short");
-    }
+    cfg.validate()?;
     Ok(cfg)
 }
 
@@ -32,7 +26,6 @@ fn load_config(path: &str) -> Result<Config> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = load_config(&cli.config)?;
-
     let d = sudo_gate::daemon::Daemon::new(cfg);
     d.serve(&cli.socket).await?;
     Ok(())

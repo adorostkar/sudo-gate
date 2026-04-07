@@ -1,6 +1,6 @@
 # Install (manual steps)
 
-This repo **does not** perform any root changes automatically.
+This repo does not perform root changes automatically.
 
 ## 0) Create group + add your automation user
 
@@ -9,19 +9,19 @@ sudo groupadd --system sudo-gate 2>/dev/null || true
 sudo usermod -aG sudo-gate <AUTOMATION_USER>
 ```
 
-Log out/in (or restart the service) so group membership applies.
+Use a dedicated automation user. Do not use your personal admin account.
 
 ## 1) Build
 
 ```bash
 . "$HOME/.cargo/env"
-cd /home/ashkan/.openclaw/workspace/sudo-gate
+cd /path/to/sudo-gate
 cargo build --release
 ```
 
 Artifacts:
-- `target/release/sudo-gate` (client)
-- `target/release/sudo-gated` (daemon)
+- `target/release/sudo-gate`
+- `target/release/sudo-gated`
 
 ## 2) Install binaries
 
@@ -39,15 +39,20 @@ sudo chmod 0600 /etc/sudo-gate/config.json
 sudoedit /etc/sudo-gate/config.json
 ```
 
-Why: config contains secrets (Telegram bot token + HMAC key) and should not be writable by the automation user.
+Recommended hardening in config:
+- set `security.requester_allow_uids` to the exact automation uid(s)
+- keep `telegram.result_mode` at `summary` or `none` unless you intentionally want more output copied to Telegram
+- keep `policy.mode = "allowlist"`
+- use absolute paths in `policy.allow`
+- keep the allowlist narrow and task-specific
 
 ## 4) Runtime dirs + socket
 
-The daemon creates `/run/sudo-gate/` and also enforces:
+The daemon requires its socket to live directly under `/run/sudo-gate/` and enforces:
 - dir: `root:sudo-gate` mode `0750`
 - socket: `root:sudo-gate` mode `0660`
 
-If you want the directory created on boot before the service starts, add a tmpfiles rule:
+Optional tmpfiles rule:
 
 ```bash
 sudo tee /etc/tmpfiles.d/sudo-gate.conf >/dev/null <<'EOF'
@@ -65,29 +70,42 @@ sudo systemctl enable --now sudo-gated
 sudo systemctl status sudo-gated
 ```
 
-## 6) Test
-
-From the unprivileged user:
+Then inspect audit logs:
 
 ```bash
-sudo-gate request --reason "test" -- id
+journalctl -u sudo-gated -f
 ```
 
-Approve in Telegram and verify you get stdout/stderr/exit code.
+## 6) Test
 
-## Next: make it a *real* gate (prevent bypass)
+From the automation user:
 
-This project enforces approval **only if** the automation user cannot get root through other means.
+```bash
+sudo-gate request --reason "refresh apt cache" -- /usr/bin/apt update
+```
 
-Minimum checklist:
+Approve in Telegram and verify:
+- Telegram prompt shows requester uid/gid/pid
+- command runs only if it matches the allowlist
+- audit logs appear in journald
 
-- Automation user should not have direct sudo:
+## Hard-gate checklist
+
+Minimum checklist for this to be a real gate:
+
+- automation user has no direct sudo:
   ```bash
   sudo -l -U <AUTOMATION_USER>
   ```
-- Automation user must not be able to write to:
+- automation user cannot write to:
   - `/etc/sudoers.d/`
   - `/etc/systemd/system/`
-  - `/etc/cron.*` and `/var/spool/cron/`
+  - `/etc/cron.*`
+  - `/var/spool/cron/`
+  - `/usr/local/sbin/sudo-gated`
+  - `/usr/local/bin/sudo-gate`
+  - `/etc/sudo-gate/config.json`
+- only expected local users can open `/run/sudo-gate/sock`
+- `policy.allow` contains only narrow commands you are comfortable approving
 
-If `<AUTOMATION_USER>` is your personal admin user, consider creating a dedicated non-sudo user for automation.
+If any of those fail, sudo-gate is a convenience approval wrapper, not a strong privilege boundary.

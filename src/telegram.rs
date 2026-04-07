@@ -9,10 +9,12 @@ pub struct Telegram {
 
 impl Telegram {
     pub fn new(token: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            token,
-        }
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("build telegram client");
+        Self { client, token }
     }
 
     fn api_url(&self, method: &str) -> String {
