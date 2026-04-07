@@ -1,39 +1,65 @@
 # sudo-gate
 
-A small **root daemon** that runs privileged commands only after you approve them in **Telegram**.
+A small root daemon that runs privileged commands only after you approve them in Telegram.
 
 ## What it does
 
 - `sudo-gated` (daemon, runs as root)
-  - listens on a Unix socket (default: `/run/sudo-gate/sock`)
-  - sends an approval prompt to Telegram with **Approve/Deny** buttons
-  - executes the requested command **only after approval** (argv-only, no shell)
-  - edits the Telegram message to remove buttons after one click
-  - sends a Telegram follow-up with the execution result
+  - listens on a Unix socket under `/run/sudo-gate/` (default: `/run/sudo-gate/sock`)
+  - reads requester identity from Unix socket peer credentials (uid/gid/pid)
+  - validates request size and shape before prompting
+  - enforces a fail-closed allowlist policy
+  - sends an approval prompt to Telegram with Approve/Deny buttons
+  - executes the approved command without a shell, with a minimal environment
+  - emits structured audit events to stdout/journald
+  - can send a result summary back to Telegram
 
 - `sudo-gate` (client, runs unprivileged)
   - submits a request with `--reason` and `-- <cmd args...>`
 
-## Security model (honest)
+## Security model
 
-- This is an **approval gate**, not magic: if the requesting user still has direct `sudo` (or can edit systemd/cron/sudoers), they can bypass it.
-- Real safety requires OS hardening: run your automation under a non-sudo user and restrict write access to privileged control planes.
+sudo-gate is a privilege broker, but only if the requester cannot bypass it.
+
+Real safety requires all of the following:
+- run automation under a dedicated non-sudo user
+- keep `/etc/sudo-gate/config.json` root-owned and `0600`
+- keep the socket group narrow (`sudo-gate`)
+- preferably set `security.requester_allow_uids` to the exact requester uid(s)
+- use `policy.mode = "allowlist"` with absolute executable paths and narrow arg prefixes
+
+If the requester can still use direct sudo, or can edit systemd/cron/sudoers, this is only an approval wrapper.
+
+## Main hardening features
+
+- shell-free execution (`argv` only)
+- Unix peer credential capture and auditing
+- optional requester uid allowlist
+- fail-closed allowlist policy
+- absolute executable paths required
+- request size, arg count, arg length, and pending request caps
+- per-uid rate limiting
+- timeout cleanup for stale requests
+- configurable Telegram result leakage (`none|summary|truncated|full`)
 
 ## Config
 
-Production config is expected at:
+Production config:
 - `/etc/sudo-gate/config.json` (root-owned `0600`)
 
-Key fields:
-- `telegram.bot_token` (secret)
-- `telegram.allowed_user_id` (numeric Telegram user id allowed to approve)
-- `telegram.allowed_chat_id` (optional extra guard)
-- `security.hmac_secret_hex` (32 bytes hex recommended)
-- `security.request_ttl_seconds` (approval timeout)
-- `policy.mode`: `allow_all` for now (later: deny-by-default)
-- `policy.deny`: empty array for now
+Important fields:
+- `telegram.allowed_user_id` — Telegram user allowed to approve
+- `telegram.allowed_chat_id` — optional extra chat guard
+- `telegram.result_mode` — `none`, `summary`, `truncated`, or `full` (still bounded by daemon output capture limits)
+- `security.requester_allow_uids` — optional explicit allowlist of local requester uids
+- `security.max_request_bytes` — cap on inbound socket request size
+- `security.max_pending_requests` — bound on simultaneous approvals
+- `security.per_uid_max_requests` + `security.per_uid_window_seconds` — local rate limiting
+- `policy.mode` — must be `allowlist`
+- `policy.allow` — exact executable allow rules using absolute paths
+- `policy.deny` — extra deny rules for defense in depth
 
-See: `config.example.json`.
+See `config.example.json`.
 
 ## Build
 
@@ -44,50 +70,58 @@ cargo build --release
 
 ## Install + run
 
-See `packaging/INSTALL.md` for the full install.
-
-### Hard-gate essentials (summary)
-
-This tool is only a *real* gate if your automation user cannot bypass it.
-
-1) Create group and add your automation user:
+Simplest path:
 
 ```bash
-sudo groupadd --system sudo-gate 2>/dev/null || true
-sudo usermod -aG sudo-gate <AUTOMATION_USER>
+./packaging/install.sh
 ```
 
-2) Config must be root-owned:
+The installer can interactively:
+- build and install binaries
+- create the `sudo-gate` group
+- add your automation user to that group
+- install tmpfiles + systemd service
+- generate `/etc/sudo-gate/config.json`
+- start the daemon and run a doctor check
+
+There is also a Telegram discovery helper:
 
 ```bash
-sudo mkdir -p /etc/sudo-gate
-sudo cp config.example.json /etc/sudo-gate/config.json
-sudo chmod 0600 /etc/sudo-gate/config.json
-sudoedit /etc/sudo-gate/config.json
+python3 packaging/discover_telegram_ids.py --bot-token '123456:abc'
 ```
 
-3) Runtime dir + socket perms (daemon should enforce these on startup):
-- `/run/sudo-gate` should be `root:sudo-gate` mode `0750`
-- `/run/sudo-gate/sock` should be `root:sudo-gate` mode `0660`
+Ask the intended approver to send a fresh message to the bot first, then use the helper to discover candidate `allowed_user_id` and `allowed_chat_id` values.
 
-4) Ensure your automation user does **not** have direct sudo (otherwise it can bypass the gate):
-
-```bash
-sudo -l -U <AUTOMATION_USER>
-```
+For manual steps and non-interactive examples, see `packaging/INSTALL.md`.
 
 ## Usage
 
 Submit a request:
 
 ```bash
-sudo-gate request --reason "restart nginx" -- systemctl restart nginx
+sudo-gate request --reason "refresh apt metadata" -- /usr/bin/apt update
 ```
 
 Approve in Telegram.
 
-Tip: this works well as a gate in front of any automation (CI runner, cron job, agent, scripts).
+## Audit trail
+
+The daemon prints structured JSON audit events to stdout, which systemd/journald can collect. Key events include:
+- `request.submitted`
+- `approval.resolved`
+- `policy.denied`
+- `command.executed`
+- `command.timed_out`
+
+## Current limitations
+
+- Telegram approval is still a high-value root authorization factor
+- the daemon does not yet do multi-party approval or second-factor confirmation
+- policies are argv-prefix based, not a full DSL
+- service hardening depends on what your allowlist needs to do
+
 ## Repo hygiene
 
-- Never commit secrets.
-- Use `/etc/sudo-gate/config.json` (or a local ignored config).
+- Never commit secrets
+- Keep production config outside the repo
+- Treat Telegram output as an exfiltration surface; prefer `summary` or `none`

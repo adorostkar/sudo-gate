@@ -11,12 +11,18 @@ ExecStart=/usr/local/sbin/sudo-gated --config /etc/sudo-gate/config.json --socke
 Restart=on-failure
 RestartSec=1
 
-# Hardening (adjust if it breaks something)
+# Hardening defaults. Adjust ReadWritePaths / policy allowlist together if your
+# approved commands need broader access.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/run/sudo-gate /var/log /etc/sudo-gate
+ProtectSystem=full
+ReadWritePaths=/run/sudo-gate /var
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=yes
 
 [Install]
 WantedBy=multi-user.target

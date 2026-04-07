@@ -34,13 +34,7 @@ enum Command {
 fn load_config(path: &str) -> Result<Config> {
     let cfg_text = std::fs::read_to_string(path).with_context(|| format!("read config: {path}"))?;
     let cfg: Config = serde_json::from_str(&cfg_text).context("parse config")?;
-
-    if cfg.telegram.allowed_user_id == 0 {
-        anyhow::bail!("telegram.allowed_user_id must be set");
-    }
-    if cfg.security.hmac_secret_hex.len() < 32 {
-        anyhow::bail!("security.hmac_secret_hex looks too short");
-    }
+    cfg.validate()?;
     Ok(cfg)
 }
 
@@ -58,9 +52,11 @@ async fn main() -> Result<()> {
                 me.id, me.username
             );
             println!(
-                "sudo-gate: policy.mode={} deny_rules={}",
+                "sudo-gate: policy.mode={} allow_rules={} deny_rules={} requester_allow_uids={}",
                 cfg.policy.mode,
-                cfg.policy.deny.len()
+                cfg.policy.allow.len(),
+                cfg.policy.deny.len(),
+                cfg.security.requester_allow_uids.len(),
             );
         }
         Command::Request {
