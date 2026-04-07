@@ -1,6 +1,37 @@
-# Install (manual steps)
+# Install
 
-This repo does not perform root changes automatically.
+Recommended path:
+
+```bash
+./packaging/install.sh
+```
+
+The installer is interactive by default and can also run non-interactively with flags.
+
+Example:
+
+```bash
+./packaging/install.sh \
+  --non-interactive \
+  --bot-token '123456:abc' \
+  --allowed-user-id 72292017 \
+  --automation-user hermes \
+  --requester-uid 1001 \
+  --allow '/usr/bin/apt|update'
+```
+
+It will:
+- build release binaries (unless `--no-build`)
+- install the client + daemon binaries
+- create the `sudo-gate` group
+- optionally add an automation user to that group
+- install tmpfiles + systemd service
+- generate `/etc/sudo-gate/config.json`
+- start/restart the daemon and run a doctor check
+
+## Manual steps
+
+These are still useful if you want full control.
 
 ## 0) Create group + add your automation user
 

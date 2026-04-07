@@ -70,7 +70,21 @@ cargo build --release
 
 ## Install + run
 
-See `packaging/INSTALL.md`.
+Simplest path:
+
+```bash
+./packaging/install.sh
+```
+
+The installer can interactively:
+- build and install binaries
+- create the `sudo-gate` group
+- add your automation user to that group
+- install tmpfiles + systemd service
+- generate `/etc/sudo-gate/config.json`
+- start the daemon and run a doctor check
+
+For manual steps and non-interactive examples, see `packaging/INSTALL.md`.
 
 ## Usage
 
