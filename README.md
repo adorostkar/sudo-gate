@@ -84,6 +84,14 @@ The installer can interactively:
 - generate `/etc/sudo-gate/config.json`
 - start the daemon and run a doctor check
 
+There is also a Telegram discovery helper:
+
+```bash
+python3 packaging/discover_telegram_ids.py --bot-token '123456:abc'
+```
+
+Ask the intended approver to send a fresh message to the bot first, then use the helper to discover candidate `allowed_user_id` and `allowed_chat_id` values.
+
 For manual steps and non-interactive examples, see `packaging/INSTALL.md`.
 
 ## Usage

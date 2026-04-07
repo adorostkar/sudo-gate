@@ -8,6 +8,12 @@ Recommended path:
 
 The installer is interactive by default and can also run non-interactively with flags.
 
+If you need help finding Telegram ids first, ask the intended approver to send a fresh message like `/start` to the bot, then run:
+
+```bash
+python3 packaging/discover_telegram_ids.py --bot-token '123456:abc'
+```
+
 Example:
 
 ```bash

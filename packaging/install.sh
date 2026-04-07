@@ -66,6 +66,9 @@ Examples:
     --automation-user hermes \
     --requester-uid 1001 \
     --allow '/usr/bin/apt|update'
+
+Telegram ID discovery helper:
+  python3 packaging/discover_telegram_ids.py --bot-token 123:abc
 EOF
 }
 
